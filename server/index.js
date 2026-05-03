@@ -1,4 +1,7 @@
 import crypto from 'node:crypto';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import express from 'express';
 
@@ -14,6 +17,11 @@ const MAX_VERIFY_ATTEMPTS = 5;
 const SMSC_LOGIN = process.env.SMSC_LOGIN?.trim() || '';
 const SMSC_PASSWORD = process.env.SMSC_PASSWORD?.trim() || '';
 const SMSC_SENDER = process.env.SMSC_SENDER?.trim() || '';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DIST_PATH = path.resolve(__dirname, '../dist');
 
 const verificationStore = new Map();
 
@@ -194,6 +202,13 @@ app.post('/api/auth/verify-code', (req, res) => {
   verificationStore.delete(phone);
   res.json({ message: 'Номер успешно подтверждён' });
 });
+
+if (IS_PRODUCTION && existsSync(DIST_PATH)) {
+  app.use(express.static(DIST_PATH));
+  app.get('/{*splat}', (_req, res) => {
+    res.sendFile(path.join(DIST_PATH, 'index.html'));
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
