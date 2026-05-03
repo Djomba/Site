@@ -1,85 +1,37 @@
 import { useState } from 'react';
 import heroGymnast from '../assets/space-hero-gymnast.png';
+import { digitsOnly, formatPhoneInput, normalizePhone, validatePhone } from '../lib/phone.js';
 
-const digitsOnly = (phone) => phone.replace(/\D/g, '');
+const postJson = async (url, body) => {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
 
-const getRussianPhoneDigits = (phone) => {
-  const digits = digitsOnly(phone);
-
-  if (!digits) {
-    return '';
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
   }
 
-  if (digits.startsWith('8')) {
-    return `7${digits.slice(1, 11)}`;
+  if (!response.ok) {
+    throw new Error(payload?.message || 'Произошла ошибка. Попробуйте снова.');
   }
 
-  if (digits.startsWith('7')) {
-    return digits.slice(0, 11);
-  }
-
-  return `7${digits.slice(0, 10)}`;
+  return payload;
 };
-
-const formatPhoneInput = (phone) => {
-  const digits = getRussianPhoneDigits(phone);
-
-  if (!digits) {
-    return '';
-  }
-
-  const national = digits.slice(1);
-  const parts = {
-    code: national.slice(0, 3),
-    first: national.slice(3, 6),
-    second: national.slice(6, 8),
-    third: national.slice(8, 10),
-  };
-
-  let formatted = '+7';
-
-  if (parts.code) {
-    formatted += ` (${parts.code}`;
-  }
-
-  if (parts.code.length === 3) {
-    formatted += ')';
-  }
-
-  if (parts.first) {
-    formatted += ` ${parts.first}`;
-  }
-
-  if (parts.second) {
-    formatted += `-${parts.second}`;
-  }
-
-  if (parts.third) {
-    formatted += `-${parts.third}`;
-  }
-
-  return formatted;
-};
-
-const normalizePhone = (phone) => {
-  const digits = getRussianPhoneDigits(phone);
-  return digits ? `+${digits}` : '';
-};
-
-const validatePhone = (phone) => {
-  const digits = getRussianPhoneDigits(phone);
-  return digits.length === 11;
-};
-
-const createSecurityCode = () => String(Math.floor(100000 + Math.random() * 900000));
 
 function AuthPage({ onAuthSuccess }) {
   const [form, setForm] = useState({ name: '', phone: '', code: '' });
-  const [sentCode, setSentCode] = useState('');
   const [step, setStep] = useState('details');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSendingCode, setIsSendingCode] = useState(false);
+  const [isVerifyingCode, setIsVerifyingCode] = useState(false);
 
   const updateField = (field, value) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -91,17 +43,13 @@ function AuthPage({ onAuthSuccess }) {
     setError('');
   };
 
-  const sendSecurityCode = async () => {
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    return createSecurityCode();
-  };
-
   const handleSendCode = async (event) => {
     event.preventDefault();
     setError('');
     setSuccess('');
 
-    if (!form.name.trim()) {
+    const trimmedName = form.name.trim();
+    if (!trimmedName) {
       setError('Введите имя');
       return;
     }
@@ -111,29 +59,53 @@ function AuthPage({ onAuthSuccess }) {
       return;
     }
 
-    setIsSubmitting(true);
-    const code = await sendSecurityCode();
-    setSentCode(code);
-    setStep('code');
-    setSuccess(`Код отправлен на ${formatPhoneInput(form.phone)}. Для локального теста: ${code}`);
-    setIsSubmitting(false);
+    const normalizedPhone = normalizePhone(form.phone);
+    setIsSendingCode(true);
+
+    try {
+      await postJson('/api/auth/send-code', { phone: normalizedPhone });
+      setStep('code');
+      setSuccess(`Код отправлен на ${formatPhoneInput(normalizedPhone)}`);
+    } catch (sendError) {
+      setError(sendError.message);
+    } finally {
+      setIsSendingCode(false);
+    }
   };
 
-  const handleVerifyCode = (event) => {
+  const handleVerifyCode = async (event) => {
     event.preventDefault();
     setError('');
+    setSuccess('');
 
-    if (digitsOnly(form.code) !== sentCode) {
-      setError('Неверный код безопасности');
+    const code = digitsOnly(form.code).slice(0, 6);
+    if (code.length !== 6) {
+      setError('Введите 6-значный код');
+      return;
+    }
+
+    const normalizedPhone = normalizePhone(form.phone);
+    if (!normalizedPhone) {
+      setError('Введите корректный номер телефона');
+      setStep('details');
+      return;
+    }
+
+    setIsVerifyingCode(true);
+
+    try {
+      await postJson('/api/auth/verify-code', { phone: normalizedPhone, code });
+    } catch (verifyError) {
+      setError(verifyError.message);
+      setIsVerifyingCode(false);
       return;
     }
 
     setSuccess('Номер успешно подтвержден');
-
     setTimeout(() => {
       onAuthSuccess({
         name: form.name.trim(),
-        phone: normalizePhone(form.phone),
+        phone: normalizedPhone,
         verifiedAt: new Date().toISOString(),
       });
     }, 650);
@@ -141,10 +113,31 @@ function AuthPage({ onAuthSuccess }) {
 
   const handleChangePhone = () => {
     setStep('details');
-    setSentCode('');
     setForm((current) => ({ ...current, code: '' }));
     setError('');
     setSuccess('');
+  };
+
+  const handleResendCode = async () => {
+    const normalizedPhone = normalizePhone(form.phone);
+    if (!normalizedPhone) {
+      setStep('details');
+      setError('Введите корректный номер телефона');
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+    setIsSendingCode(true);
+
+    try {
+      await postJson('/api/auth/send-code', { phone: normalizedPhone });
+      setSuccess(`Новый код отправлен на ${formatPhoneInput(normalizedPhone)}`);
+    } catch (resendError) {
+      setError(resendError.message);
+    } finally {
+      setIsSendingCode(false);
+    }
   };
 
   return (
@@ -197,8 +190,8 @@ function AuthPage({ onAuthSuccess }) {
               {error && <p className="form-message error-message">{error}</p>}
               {success && <p className="form-message success-message">{success}</p>}
 
-              <button className="primary-button auth-submit" type="submit" disabled={isSubmitting}>
-                {isSubmitting ? 'Отправляем код...' : 'Получить код'}
+              <button className="primary-button auth-submit" type="submit" disabled={isSendingCode}>
+                {isSendingCode ? 'Отправляем код...' : 'Получить код'}
               </button>
             </form>
           )}
@@ -222,8 +215,12 @@ function AuthPage({ onAuthSuccess }) {
               {error && <p className="form-message error-message">{error}</p>}
               {success && <p className="form-message success-message">{success}</p>}
 
-              <button className="primary-button auth-submit" type="submit">
-                Подтвердить
+              <button className="primary-button auth-submit" type="submit" disabled={isVerifyingCode}>
+                {isVerifyingCode ? 'Проверяем код...' : 'Подтвердить'}
+              </button>
+
+              <button className="auth-secondary-button" type="button" onClick={handleResendCode} disabled={isSendingCode}>
+                {isSendingCode ? 'Отправка...' : 'Отправить код повторно'}
               </button>
 
               <button className="auth-secondary-button" type="button" onClick={handleChangePhone}>
