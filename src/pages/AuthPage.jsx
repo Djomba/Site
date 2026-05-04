@@ -56,6 +56,7 @@ const requestUserLocation = () =>
 function AuthPage({ onAuthSuccess }) {
   const [form, setForm] = useState({ name: '', phone: '', code: '' });
   const [step, setStep] = useState('details');
+  const [policyAccepted, setPolicyAccepted] = useState(false);
   const [geoConsent, setGeoConsent] = useState({
     approved: false,
     latitude: null,
@@ -75,6 +76,11 @@ function AuthPage({ onAuthSuccess }) {
 
   const updatePhone = (value) => {
     setForm((current) => ({ ...current, phone: formatPhoneInput(value) }));
+    setError('');
+  };
+
+  const handlePolicyChange = (event) => {
+    setPolicyAccepted(event.target.checked);
     setError('');
   };
 
@@ -109,6 +115,11 @@ function AuthPage({ onAuthSuccess }) {
     event.preventDefault();
     setError('');
     setSuccess('');
+
+    if (!policyAccepted) {
+      setError('Для продолжения примите соглашение о сборе и обработке персональных данных.');
+      return;
+    }
 
     if (!geoConsent.approved) {
       setError('Без местоположения никак не продолжить регистрацию. Нажмите кнопку соглашения.');
@@ -173,6 +184,7 @@ function AuthPage({ onAuthSuccess }) {
       onAuthSuccess({
         name: form.name.trim(),
         phone: normalizedPhone,
+        policyAcceptedAt: new Date().toISOString(),
         location: {
           latitude: geoConsent.latitude,
           longitude: geoConsent.longitude,
@@ -260,6 +272,24 @@ function AuthPage({ onAuthSuccess }) {
               </label>
 
               <div className="consent-block">
+                <div className="policy-consent">
+                  <label className="policy-consent-row" htmlFor="policy-consent-checkbox">
+                    <input
+                      id="policy-consent-checkbox"
+                      type="checkbox"
+                      checked={policyAccepted}
+                      onChange={handlePolicyChange}
+                    />
+                    <span className="policy-consent-text">
+                      Я принимаю{' '}
+                      <a href="/privacy-policy.html" target="_blank" rel="noopener noreferrer">
+                        соглашение о сборе и обработке персональных данных
+                      </a>
+                      .
+                    </span>
+                  </label>
+                </div>
+
                 <button
                   className={`consent-button ${geoConsent.approved ? 'is-approved' : ''}`}
                   type="button"
